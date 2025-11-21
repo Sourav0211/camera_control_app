@@ -1,59 +1,98 @@
+
 import cv2
 import numpy as np
-import threading
 import time
-from datetime import datetime
+import sys
 
-class MockCameraController:
-    def __init__(self, device_index=0):
-        self.device_index = device_index
-        self.frame = None
-        self.lock = threading.Lock()
-        self.is_running = False
-        self.thread = None
-        self.width = 640
-        self.height = 480
+def generate_test_frame(frame_count, width=1280, height=720):
+    """Generate a test frame with moving elements"""
+    # Create a black background
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Add gradient background
+    for i in range(height):
+        color_value = int((i / height) * 255)
+        frame[i, :] = [color_value // 3, color_value // 2, color_value]
+    
+    # Add moving circle
+    center_x = int(width // 2 + 200 * np.sin(frame_count * 0.05))
+    center_y = int(height // 2 + 150 * np.cos(frame_count * 0.05))
+    cv2.circle(frame, (center_x, center_y), 50, (0, 255, 0), -1)
+    
+    # Add text with frame counter
+    cv2.putText(frame, f'Virtual Camera - Frame: {frame_count}', 
+                (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    
+    # Add timestamp
+    timestamp = time.strftime('%H:%M:%S')
+    cv2.putText(frame, timestamp, 
+                (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+    
+    # Add some random noise for realism
+    noise = np.random.randint(0, 20, (height, width, 3), dtype=np.uint8)
+    frame = cv2.add(frame, noise)
+    
+    return frame
 
-    def start(self):
-        if self.is_running:
-            return
-        self.is_running = True
-        self.thread = threading.Thread(target=self._generate_frames, daemon=True)
-        self.thread.start()
+def main():
+    # Virtual camera device (created by v4l2loopback)
+    device = '/dev/video0'
+    
+    print(f"Starting mock camera feed to {device}")
+    print("Press Ctrl+C to stop")
+    
+    try:
+        # Open the virtual camera device
+        cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+        
+        # Set properties
+        width, height = 1280, 720
+        fps = 30
+        
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        
+        if not cap.isOpened():
+            print(f"Error: Could not open {device}")
+            print("Make sure v4l2loopback is loaded and you have permissions")
+            sys.exit(1)
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        out = cv2.VideoWriter(device, fourcc, fps, (width, height))
+        
+        if not out.isOpened():
+            print(f"Error: Could not write to {device}")
+            sys.exit(1)
+        
+        frame_count = 0
+        
+        while True:
+            frame = generate_test_frame(frame_count, width, height)
+            out.write(frame)
+            
+            frame_count += 1
+            
+            # Control frame rate
+            time.sleep(1.0 / fps)
+            
+            if frame_count % 100 == 0:
+                print(f"Frames sent: {frame_count}")
+    
+    except KeyboardInterrupt:
+        print("\nStopping mock camera feed...")
+    
+    except Exception as e:
+        print(f"Error: {e}")
+    
+    finally:
+        if 'out' in locals():
+            out.release()
+        if 'cap' in locals():
+            cap.release()
+        print("Mock camera feed stopped")
 
-    def _generate_frames(self):
-        while self.is_running:
-            # Create a fake RGB image
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-            # Fill with a color (blue-ish)
-            frame[:] = (60, 60, 180)
-
-            # Add timestamp text
-            text = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            cv2.putText(frame, f"Mock Camera {self.device_index}", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            cv2.putText(frame, text, (20, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-            with self.lock:
-                self.frame = frame
-
-            time.sleep(1 / 30)  # simulate 30 FPS
-
-    def get_frame(self):
-        with self.lock:
-            return None if self.frame is None else self.frame.copy()
-
-    def set_property(self, prop, value):
-        # For mock: update resolution if needed
-        if prop == "width":
-            self.width = int(value)
-        elif prop == "height":
-            self.height = int(value)
-
-    def stop(self):
-        self.is_running = False
-        if self.thread:
-            self.thread.join(timeout=1)
-        self.frame = None
+if __name__ == '__main__':
+    main()
