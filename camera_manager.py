@@ -1,6 +1,8 @@
-# camera_manager.py
+
 import cv2
 import threading
+import platform
+import os
 
 class CameraManager:
     def __init__(self, camera_id):
@@ -12,12 +14,9 @@ class CameraManager:
     def initialize(self):
         """Initialize camera connection"""
         try:
-            # Try V4L2 for Linux, fall back to default for macOS
-            import platform
             if platform.system() == 'Linux':
                 self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
             else:
-                # macOS and other systems use default backend
                 self.cap = cv2.VideoCapture(self.camera_id)
             
             if self.cap.isOpened():
@@ -84,21 +83,36 @@ class CameraManager:
 
 def detect_cameras(max_cameras=10):
     """Detect available cameras on the system"""
-    import platform
     available_cameras = []
     
-    for i in range(max_cameras):
-        if platform.system() == 'Linux':
-            cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
-        else:
-            cap = cv2.VideoCapture(i)
-            
-        if cap.isOpened():
-            available_cameras.append(i)
-            cap.release()
-        else:
-            # On macOS, cameras might not be sequential, so check a few more
-            if platform.system() != 'Linux' and i < 3:
-                continue
-            break
+    if platform.system() == 'Linux':
+        for i in range(max_cameras):
+            device_path = f'/dev/video{i}'
+            if os.path.exists(device_path):
+                try:
+                    cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
+                    if cap.isOpened():
+                        available_cameras.append(i)
+                        cap.release()
+                except Exception as e:
+                    print(f"Warning: Could not open {device_path}: {e}")
+                    pass
+    else:
+        consecutive_failures = 0
+        for i in range(max_cameras):
+            try:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    available_cameras.append(i)
+                    cap.release()
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        break
+            except:
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    break
+    
     return available_cameras
